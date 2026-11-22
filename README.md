@@ -10,6 +10,10 @@ Don't stress your Claude with CAPTCHAs. no-captcha-proxy sends every CAPTCHA you
    ```sh
    export OPENROUTER_API_KEY=sk-or-...
    ```
+   Or, to read it from a password manager only when a CAPTCHA first shows up, set a command that prints it:
+   ```sh
+   export OPENROUTER_API_KEY_CMD='op read "op://Private/OpenRouter/credential"'
+   ```
 2. **Choose site blocklist.** The proxy won't solve on sites in `CAPTCHA_BLOCKLIST`. Set it in your shell profile:
    ```sh
    export CAPTCHA_BLOCKLIST="default, example.com, login.example.org"   # built-in list of 81 sites plus 2 sites
@@ -23,7 +27,7 @@ Don't stress your Claude with CAPTCHAs. no-captcha-proxy sends every CAPTCHA you
    server named chrome-devtools that runs
      python3 ~/git/no-captcha-proxy/captcha-proxy.py chrome-devtools-mcp --headless --experimentalVision
        --chromeArg="--user-agent=<a normal, non-headless Chrome user agent for my installed Chrome version>"
-   with OPENROUTER_API_KEY and CAPTCHA_BLOCKLIST (if set) passed through from my environment.
+   with OPENROUTER_API_KEY (or OPENROUTER_API_KEY_CMD) and CAPTCHA_BLOCKLIST (if set) passed through from my environment.
    Then run
      python3 ~/git/no-captcha-proxy/selftest.py <that same command>
    and show me its RESULT line. It should say PASS.
@@ -43,7 +47,7 @@ A stdio MCP proxy in front of [chrome-devtools-mcp](https://github.com/ChromeDev
 
 ## Options
 
-- `CAPTCHA_MODEL`: any vision model on OpenRouter (default `z-ai/glm-5.3-flashx`).
+- `CAPTCHA_MODEL`: any vision model on OpenRouter (default `z-ai/glm-5.3-flash`).
 - If something doesn't work: the log is `~/.cache/captcha-proxy.log`, and `python3 selftest.py <browser MCP command>` checks the setup on Google's reCAPTCHA demo page.
 
 Use it for an agent's normal tasks with your own accounts, never for bulk sign-ups,

@@ -11,8 +11,9 @@ tool's result, with one line added saying what happened.
 
 Usage: put it in front of the MCP command, e.g.
   OPENROUTER_API_KEY=... captcha-proxy.py chrome-devtools-mcp --experimentalVision ...
-chrome-devtools-mcp must run with --experimentalVision (click_at). The key is
-not passed on to the MCP or Chrome. Log: ~/.cache/captcha-proxy.log.
+or, to read the key only when a CAPTCHA first shows, OPENROUTER_API_KEY_CMD='op read ...'.
+chrome-devtools-mcp must run with --experimentalVision (click_at). Neither is
+passed on to the MCP or Chrome. Log: ~/.cache/captcha-proxy.log.
 """
 import asyncio
 import base64
@@ -155,7 +156,7 @@ class Proxy:
             except solver.SolveError as e:
                 log("solver error", e)
                 errors += 1
-                if errors >= 3 or "OPENROUTER_API_KEY" in str(e):
+                if errors >= 3 or "OPENROUTER_API_KEY" in str(e):   # no key: stop, don't ask again
                     return f"[captcha-proxy] A CAPTCHA is showing; the solver failed: {e}"
                 continue          # a malformed answer: look again
             log("round", rnd, json.dumps(d))
@@ -253,7 +254,8 @@ class Proxy:
                 await self.write_out(msg)
 
     async def run(self):
-        env = {k: v for k, v in os.environ.items() if k != "OPENROUTER_API_KEY"}
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("OPENROUTER_API_KEY", "OPENROUTER_API_KEY_CMD")}
         self.child = await asyncio.create_subprocess_exec(
             *self.cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             limit=64 * 1024 * 1024, env=env)

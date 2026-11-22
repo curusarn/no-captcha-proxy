@@ -4,7 +4,8 @@
 One round of a CAPTCHA (reCAPTCHA, hCaptcha, a challenge checkbox) solved by a
 vision GLM model through OpenRouter: prints where to click_at (viewport pixels)
 and what to do next. The browser wrapper's proxy (captcha-proxy.py) runs this
-loop on its own; the CLI is for a manual round. Needs OPENROUTER_API_KEY.
+loop on its own; the CLI is for a manual round. Needs OPENROUTER_API_KEY, or
+OPENROUTER_API_KEY_CMD, a command that prints it (run at the first CAPTCHA).
 
 Exit 0: an answer to act on. 2: the site is blocklisted. 3: GLM can't read it.
 CAPTCHA_BLOCKLIST overrides the built-in BLOCKLIST (see blocklist()).
@@ -13,6 +14,7 @@ import argparse
 import base64
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -59,7 +61,8 @@ BLOCKLIST = [
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 # Fast and placed tiles exactly on betterstack.com's grid (2026-11-04);
 # z-ai/glm-5v-turbo took 30 s and its coordinates were off.
-MODEL = os.environ.get("CAPTCHA_MODEL", "z-ai/glm-5.3-flashx")
+# glm-5.3-flashx lost its only zero-retention endpoint (Z.AI) by 2026-11-22: every call was a 404.
+MODEL = os.environ.get("CAPTCHA_MODEL", "z-ai/glm-5.3-flash")
 
 PROMPT = """This is a screenshot (top-left origin, pixel coordinates) of a web page
 with a CAPTCHA (reCAPTCHA, hCaptcha or a "verify you are human" checkbox).
@@ -115,12 +118,29 @@ def blocked(url):
     return None
 
 
+_key = None        # the key, or the SolveError its command gave: read at most once per process
+
+
 def key():
-    """The OpenRouter API key, from the OPENROUTER_API_KEY environment variable."""
+    """The OpenRouter API key: OPENROUTER_API_KEY, else what OPENROUTER_API_KEY_CMD prints.
+    The command runs at the first CAPTCHA to solve, not when the proxy starts, so a browser
+    that never meets one never reads the key (e.g. from a password manager)."""
+    global _key
     k = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not k:
-        raise SolveError("OPENROUTER_API_KEY is not set")
-    return k
+    if k:
+        return k
+    if _key is None:
+        cmd = os.environ.get("OPENROUTER_API_KEY_CMD", "").strip()
+        if not cmd:
+            _key = SolveError("OPENROUTER_API_KEY is not set (nor OPENROUTER_API_KEY_CMD)")
+        else:
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
+            out = r.stdout.strip()
+            _key = out if r.returncode == 0 and out else SolveError(
+                f"OPENROUTER_API_KEY_CMD failed (exit {r.returncode}), so OPENROUTER_API_KEY is not set")
+    if isinstance(_key, SolveError):
+        raise _key
+    return _key
 
 
 def ask(png_bytes):
