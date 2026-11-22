@@ -41,7 +41,7 @@ A stdio MCP proxy in front of [chrome-devtools-mcp](https://github.com/ChromeDev
 - `captcha-proxy.py`: the proxy and the solve loop (screenshot, decide, `click_at`,
   VERIFY, repeat). It counts success by reCAPTCHA's own token, and re-opens a
   challenge that Google rejected and hid.
-- `captcha-solve.py`: one round, which sends the screenshot to `z-ai/glm-5.3-flashx`
+- `captcha-solve.py`: one round, which sends the screenshot to `z-ai/glm-5.3-flash`
   and turns the answer into clicks. It also holds `BLOCKLIST`, the sites the proxy
   never solves on. It works as a CLI too: `captcha-solve.py --url <page> <screenshot.png>`.
 
