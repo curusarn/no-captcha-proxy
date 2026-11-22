@@ -2,7 +2,7 @@
 
 ![Claude asks Chrome to sign in; the website answers with a CAPTCHA; Chrome sends a screenshot to GLM and gets the clicks back; Claude gets success](docs/flow.png)
 
-Don't stress your Claude with CAPTCHAs. no-captcha-proxy sends every CAPTCHA your Claude's browser hits to GLM, or any other vision model on OpenRouter, and clicks the answer, so your Claude gets a clean sign-in.
+Don't stress your Claude with CAPTCHAs. no-captcha-proxy sends every CAPTCHA your Claude's browser hits to a vision model on OpenRouter (Kimi K3.1 Pro by default, any other you pick) and clicks the answer, so your Claude gets a clean sign-in.
 
 ## Set it up with a single prompt
 
@@ -41,13 +41,13 @@ A stdio MCP proxy in front of [chrome-devtools-mcp](https://github.com/ChromeDev
 - `captcha-proxy.py`: the proxy and the solve loop (screenshot, decide, `click_at`,
   VERIFY, repeat). It counts success by reCAPTCHA's own token, and re-opens a
   challenge that Google rejected and hid.
-- `captcha-solve.py`: one round, which sends the screenshot to `z-ai/glm-5.3-flash`
+- `captcha-solve.py`: one round, which sends the screenshot to `moonshotai/kimi-k3.1-pro`
   and turns the answer into clicks. It also holds `BLOCKLIST`, the sites the proxy
   never solves on. It works as a CLI too: `captcha-solve.py --url <page> <screenshot.png>`.
 
 ## Options
 
-- `CAPTCHA_MODEL`: any vision model on OpenRouter (default `z-ai/glm-5.3-flash`).
+- `CAPTCHA_MODEL`: any vision model on OpenRouter (default `moonshotai/kimi-k3.1-pro`).
 - If something doesn't work: the log is `~/.cache/captcha-proxy.log`, and `python3 selftest.py <browser MCP command>` checks the setup on Google's reCAPTCHA demo page.
 
 Use it for an agent's normal tasks with your own accounts, never for bulk sign-ups,

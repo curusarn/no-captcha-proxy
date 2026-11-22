@@ -178,7 +178,7 @@ class Proxy:
             if tok:
                 log("solved", page, rnd)
                 return (f"[captcha-proxy] A CAPTCHA appeared and was solved automatically "
-                        f"({rnd} round{'s' if rnd > 1 else ''}, GLM). Take a new snapshot: "
+                        f"({rnd} round{'s' if rnd > 1 else ''}, {solver.MODEL}). Take a new snapshot: "
                         "the page has moved on since this result.")
             if tok == "":
                 if st.get("checkbox"):

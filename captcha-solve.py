@@ -59,10 +59,11 @@ BLOCKLIST = [
 ]
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
-# Fast and placed tiles exactly on betterstack.com's grid (2026-11-04);
-# z-ai/glm-5v-turbo took 30 s and its coordinates were off.
-# glm-5.3-flashx lost its only zero-retention endpoint (Z.AI) by 2026-11-22: every call was a 404.
-MODEL = os.environ.get("CAPTCHA_MODEL", "z-ai/glm-5.3-flash")
+# Every model sent screenshots must have a zero-retention endpoint ("zdr" below). On 2026-11-22
+# glm-5.3-flashx had lost its only one (every call a 404); on a real reCAPTCHA grid kimi-k3.1-pro
+# and claude-haiku-5.5 picked exactly the right tiles, glm-5.3-flash one too many and
+# qwen3-vl-235b missed the grid. Kimi passed Google's demo twice in two live runs (1.6 s a round).
+MODEL = os.environ.get("CAPTCHA_MODEL", "moonshotai/kimi-k3.1-pro")
 
 PROMPT = """This is a screenshot (top-left origin, pixel coordinates) of a web page
 with a CAPTCHA (reCAPTCHA, hCaptcha or a "verify you are human" checkbox).
@@ -172,7 +173,7 @@ def ask(png_bytes):
     try:
         return json.loads(text[start:end + 1])
     except Exception:
-        raise SolveError(f"GLM's answer isn't JSON: {text[:200]}")
+        raise SolveError(f"{MODEL}'s answer isn't JSON: {text[:200]}")
 
 
 def decide(png_bytes):
@@ -219,7 +220,7 @@ def main():
     except SolveError as e:
         sys.exit(f"captcha-solve: {e}")
     print(json.dumps(d))
-    print(f"GLM: {d['say']}", file=sys.stderr)
+    print(f"{MODEL}: {d['say']}", file=sys.stderr)
     for x, y in d["points"]:
         print(f"  click_at x={x} y={y}", file=sys.stderr)
     if d["then"] == "verify":
