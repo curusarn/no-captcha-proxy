@@ -17,10 +17,12 @@ passed on to the MCP or Chrome. Log: ~/.cache/captcha-proxy.log.
 """
 import asyncio
 import base64
+import hashlib
 import importlib.util
 import json
 import os
 import re
+import shutil
 import sys
 import time
 
@@ -31,6 +33,10 @@ solver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(solver)
 
 LOG = os.path.expanduser("~/.cache/captcha-proxy.log")
+# The browser MCP's handshake (initialize and tools/list answers), saved from its first start, so
+# later sessions get them without starting it: the MCP (node, ~80 MB) and Chrome start only at the
+# first other request. Every Claude session starts this proxy, and most never use the browser.
+CACHE_DIR = os.path.expanduser("~/.cache/captcha-proxy")
 # Tools after which a CAPTCHA can show up, and whether it can appear late
 # (an invisible reCAPTCHA pops its challenge a moment after a submit click).
 WATCH = {"click": True, "click_at": True, "press_key": True, "fill_form": True,
@@ -77,6 +83,12 @@ def log(*a):
 class Proxy:
     def __init__(self, cmd):
         self.cmd = cmd
+        self.child = None
+        self.child_lock = asyncio.Lock()
+        self.child_reader = None
+        self.init_msg = None             # the agent's initialize request, replayed to a late child
+        self.hs = {}                     # handshake answers seen from the child, for the cache
+        self.hs_ids = {}                 # agent request id -> "initialize" / "tools/list"
         self.pending = {}      # our own request id -> future
         self.held = {}         # agent request id -> future (response we post-process)
         self.n = 0
@@ -223,6 +235,63 @@ class Proxy:
             log("error", repr(e))
         await self.write_out(resp)
 
+    def cache_path(self, proto):
+        """The handshake cache for this MCP command, its installed version and the client's protocol."""
+        exe = shutil.which(self.cmd[0]) or self.cmd[0]
+        try:
+            real = os.path.realpath(exe)
+            stamp = f"{real}:{os.stat(real).st_mtime_ns}"
+        except OSError:
+            return None
+        key = hashlib.sha1(json.dumps([self.cmd, stamp, proto]).encode()).hexdigest()[:16]
+        return os.path.join(CACHE_DIR, f"handshake-{key}.json")
+
+    def cached(self):
+        p = self.init_msg and self.cache_path(self.init_msg.get("params", {}).get("protocolVersion"))
+        try:
+            with open(p) as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def save_handshake(self):
+        p = self.init_msg and self.cache_path(self.init_msg.get("params", {}).get("protocolVersion"))
+        if not p or "initialize" not in self.hs or "tools/list" not in self.hs:
+            return
+        try:
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            tmp = p + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(self.hs, f)
+            os.replace(tmp, p)
+        except Exception as e:
+            log("handshake cache", repr(e))
+
+    async def ensure_child(self, replay):
+        """Starts the MCP if it isn't running. replay: send it the agent's handshake first (the
+        agent already got the cached answers)."""
+        async with self.child_lock:
+            if self.child:
+                return
+            env = {k: v for k, v in os.environ.items()
+                   if k not in ("OPENROUTER_API_KEY", "OPENROUTER_API_KEY_CMD")}
+            self.child = await asyncio.create_subprocess_exec(
+                *self.cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                limit=64 * 1024 * 1024, env=env)
+            self.child_reader = asyncio.create_task(self.from_child())
+            if replay and self.init_msg:
+                self.n += 1
+                rid = f"captcha-proxy-{self.n}"
+                fut = asyncio.get_running_loop().create_future()
+                self.pending[rid] = fut
+                await self.write_child({**self.init_msg, "id": rid})
+                await asyncio.wait_for(fut, 60)
+                await self.write_child({"jsonrpc": "2.0", "method": "notifications/initialized"})
+                log("started the browser MCP at the first request")
+
+    async def answer(self, msg, result):
+        await self.write_out({"jsonrpc": "2.0", "id": msg["id"], "result": result})
+
     async def from_agent(self):
         reader = asyncio.StreamReader()
         await asyncio.get_running_loop().connect_read_pipe(
@@ -232,12 +301,32 @@ class Proxy:
                 msg = json.loads(line)
             except Exception:
                 continue
-            if msg.get("method") == "tools/call" and "id" in msg and \
+            method = msg.get("method")
+            if not self.child:
+                if method == "initialize":
+                    self.init_msg = msg
+                    c = self.cached()
+                    if c:
+                        await self.answer(msg, c["initialize"])
+                        continue
+                elif method == "tools/list" and (c := self.cached()):
+                    await self.answer(msg, c["tools/list"])
+                    continue
+                elif method == "ping" and "id" in msg:
+                    await self.answer(msg, {})
+                    continue
+                elif method and method.startswith("notifications/"):
+                    continue          # nothing to tell an MCP that isn't running
+                await self.ensure_child(replay=method != "initialize")
+            if method in ("initialize", "tools/list") and "id" in msg:
+                self.hs_ids[msg["id"]] = method
+            if method == "tools/call" and "id" in msg and \
                     msg.get("params", {}).get("name") in WATCH:
                 asyncio.create_task(self.handle(msg))
             else:
                 await self.write_child(msg)
-        self.child.stdin.close()
+        if self.child:
+            self.child.stdin.close()
 
     async def from_child(self):
         while line := await self.child.stdout.readline():
@@ -251,16 +340,16 @@ class Proxy:
             elif "method" not in msg and rid in self.held:
                 self.held.pop(rid).set_result(msg)
             else:
+                if "method" not in msg and rid in self.hs_ids and "result" in msg:
+                    self.hs[self.hs_ids.pop(rid)] = msg["result"]
+                    self.save_handshake()
                 await self.write_out(msg)
 
     async def run(self):
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("OPENROUTER_API_KEY", "OPENROUTER_API_KEY_CMD")}
-        self.child = await asyncio.create_subprocess_exec(
-            *self.cmd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            limit=64 * 1024 * 1024, env=env)
-        await asyncio.gather(self.from_agent(), self.from_child())
-        await self.child.wait()
+        await self.from_agent()
+        if self.child:
+            await self.child_reader
+            await self.child.wait()
 
 
 if __name__ == "__main__":
